@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Currency Detector</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f0f0f0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .camera-container {
+            width: 100%;
+            max-width: 400px;
+            margin: 20px auto;
+            position: relative;
+        }
+        #video {
+            width: 100%;
+            border-radius: 10px;
+            background: #000;
+        }
+        #canvas {
+            display: none;
+        }
+        .button {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 25px;
+            font-size: 18px;
+            cursor: pointer;
+            width: 100%;
+            margin: 10px 0;
+            transition: background 0.3s;
+        }
+        .button:disabled {
+            background: #ccc;
+        }
+        .button:hover:not(:disabled) {
+            background: #1976D2;
+        }
+        .result {
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            text-align: center;
+            font-size: 20px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .audio-feedback {
+            display: none;
+        }
+        .loading {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Currency Detector</h1>
+            <p>Point your camera at an Indian currency note</p>
+        </div>
+        
+        <div class="camera-container">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas"></canvas>
+        </div>
+        
+        <div class="result" id="result">Ready to detect</div>
+        
+        <button class="button" id="detect">Detect Currency</button>
+        <button class="button" id="toggleCamera">Switch Camera</button>
+        
+        <audio id="audioFeedback" class="audio-feedback"></audio>
+    </div>
+
+    <div class="loading" id="loading">
+        Processing...
+    </div>
+
+    <script>
+        let video = document.getElementById('video');
+        let canvas = document.getElementById('canvas');
+        let detectButton = document.getElementById('detect');
+        let toggleButton = document.getElementById('toggleCamera');
+        let resultDiv = document.getElementById('result');
+        let audioFeedback = document.getElementById('audioFeedback');
+        let loadingDiv = document.getElementById('loading');
+        let currentStream = null;
+        let facingMode = 'environment';
+
+        async function speakResult(text) {
+            try {
+                const utterance = new SpeechSynthesisUtterance(text);
+                speechSynthesis.speak(utterance);
+            } catch (err) {
+                console.error('Speech synthesis error:', err);
+            }
+        }
+
+        async function setupCamera() {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+
+            try {
+                currentStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: facingMode },
+                    audio: false
+                });
+                video.srcObject = currentStream;
+                detectButton.disabled = false;
+                resultDiv.textContent = 'Ready to detect';
+            } catch (err) {
+                console.error('Error accessing camera:', err);
+                resultDiv.textContent = 'Error accessing camera';
+                detectButton.disabled = true;
+                speakResult('Error accessing camera');
+            }
+        }
+
+        toggleButton.onclick = () => {
+            facingMode = facingMode === 'environment' ? 'user' : 'environment';
+            setupCamera();
+        };
+
+        detectButton.onclick = async () => {
+            detectButton.disabled = true;
+            loadingDiv.style.display = 'flex';
+            resultDiv.textContent = 'Detecting...';
+            speakResult('Detecting');
+
+            try {
+                // Capture frame from video
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                canvas.getContext('2d').drawImage(video, 0, 0);
+                
+                // Convert to base64
+                let imageData = canvas.toDataURL('image/jpeg');
+
+                const response = await fetch('/detect', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ image: imageData })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    if (data.denomination === 'No currency detected') {
+                        resultDiv.textContent = 'No currency detected';
+                        speakResult('No currency detected');
+                    } else {
+                        const result = `${data.denomination} (${(data.confidence * 100).toFixed(1)}%)`;
+                        resultDiv.textContent = result;
+                        speakResult(`Detected ${data.denomination}`);
+                    }
+                } else {
+                    resultDiv.textContent = 'Error: ' + data.error;
+                    speakResult('Error in detection');
+                }
+            } catch (err) {
+                resultDiv.textContent = 'Error processing image';
+                speakResult('Error processing image');
+                console.error(err);
+            } finally {
+                loadingDiv.style.display = 'none';
+                detectButton.disabled = false;
+            }
+        };
+
+        // Request camera permission and start when page loads
+        setupCamera().catch(console.error);
+
+        // Handle visibility change
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                setupCamera();
+            }
+        });
+    </script>
+</body>
+</html>
